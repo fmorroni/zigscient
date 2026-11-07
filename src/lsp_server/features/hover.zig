@@ -53,6 +53,7 @@ fn hoverSymbol(
     }
 
     const tree = &decl_handle.handle.tree;
+    var build_info: ?[]const u8 = null;
     const def_str = switch (decl_handle.decl) {
         .ast_node => |node| switch (tree.nodeTag(node)) {
             .global_var_decl,
@@ -84,29 +85,36 @@ fn hoverSymbol(
                         if (!std.mem.eql(u8, name, "build")) break :blk;
                         const build_config = build_file.getConfiguration(b.ds.io);
                         defer build_config.release(b.ds.io);
+                        const md = switch (b.markup_kind) {
+                            .markdown => true,
+                            .plaintext, .unknown_value => false,
+                        };
                         var aw: std.Io.Writer.Allocating = .init(arena);
                         errdefer aw.deinit();
-                        aw.writer.writeAll("```\n") catch break :blk;
+                        const w = &aw.writer;
                         const roots_count = build_config.roots.map.count();
                         if (roots_count == 0) {
-                            aw.writer.print("No Configuration Information available.\n\n", .{}) catch break :blk;
+                            w.print("No Configuration Information available.\n\n", .{}) catch break :blk;
                         } else if (!(build_config.roots.index < roots_count)) {
-                            aw.writer.print("Error: root_id {} is not within range of 0..{}\n\n", .{ build_config.roots.index, roots_count }) catch break :blk;
+                            w.print("Error: root_id {} is not within range of 0..{}\n\n", .{ build_config.roots.index, roots_count }) catch break :blk;
                         } else {
                             const compile_step = build_config.roots.map.values()[build_config.roots.index];
-                            const is_valid_cs_index = build_config.roots.index < roots_count;
-                            if (!is_valid_cs_index) {
-                                aw.writer.print("Current root_id > roots.len => defaulting to root_id 0\n\nModules:\n\n", .{}) catch break :blk;
-                                build_config.roots.index = 0;
-                            } else aw.writer.print("### root_id: ```{}, \"{s}\"```\n\n", .{ build_config.roots.index, compile_step.name }) catch break :blk;
-                            if (is_valid_cs_index) for (compile_step.mods.items) |mod| {
-                                aw.writer.print(" * `{s}` [{s}]({s})\n", .{ mod.name, mod.path, try uri.fromPath(arena, mod.path) }) catch break :blk;
-                            };
-                            if (build_config.roots.info_file_path) |rifp| aw.writer.print("\n### See [List of all roots]({s}#L{d})\n", .{ try uri.fromPath(arena, rifp), 0 }) catch break :blk;
+                            if (md) {
+                                w.print("### root_id: ```{}, \"{s}\"```\n\n", .{ build_config.roots.index, compile_step.name }) catch break :blk;
+                                for (compile_step.mods.items) |mod| {
+                                    w.print(" * `{s}` [{s}]({s})\n", .{ mod.name, mod.path, try uri.fromPath(arena, mod.path) }) catch break :blk;
+                                }
+                                if (build_config.roots.info_file_path) |rifp| w.print("\n### See [List of all roots]({s}#L{d})\n", .{ try uri.fromPath(arena, rifp), 0 }) catch break :blk;
+                            } else {
+                                w.print("root_id: {}, \"{s}\"\n\n", .{ build_config.roots.index, compile_step.name }) catch break :blk;
+                                for (compile_step.mods.items) |mod| {
+                                    w.print(" * {s} {s}\n", .{ mod.name, mod.path }) catch break :blk;
+                                }
+                                if (build_config.roots.info_file_path) |rifp| w.print("\nList of all roots: {s}\n", .{rifp}) catch break :blk;
+                                w.writeAll("\n") catch break :blk;
+                            }
                         }
-                        aw.writer.writeAll("```zig\n\n") catch break :blk;
-                        aw.writer.writeAll(Analyser.getFunctionSignature(tree, fn_proto)) catch break :blk;
-                        break :def try aw.toOwnedSlice();
+                        build_info = try aw.toOwnedSlice();
                     }
                 }
                 break :def Analyser.getFunctionSignature(tree, fn_proto);
@@ -126,14 +134,16 @@ fn hoverSymbol(
         => tree.tokenSlice(decl_handle.nameToken()),
     };
 
-    return try hoverSymbolResolvedType(
+    const resolved = try hoverSymbolResolvedType(
         b,
         arena,
         def_str,
         &doc_strings,
         maybe_resolved_type,
         decl_handle,
-    );
+    ) orelse return null;
+    const prefix = build_info orelse return resolved;
+    return try std.mem.concat(arena, u8, &.{ prefix, resolved });
 }
 
 fn hoverSymbolResolvedType(
