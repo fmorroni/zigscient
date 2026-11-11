@@ -420,6 +420,8 @@ fn initCompilation(self: *BldDoc, ds: *DocumentStore) error{ Canceled, OutOfMemo
         if (std.mem.eql(u8, cmd, "build-exe")) .{ .build = .Exe } //
         else if (std.mem.eql(u8, cmd, "build-lib")) .{ .build = .Lib } //
         else if (std.mem.eql(u8, cmd, "build-obj")) .{ .build = .Obj } //
+        else if (std.mem.eql(u8, cmd, "test")) .zig_test //
+        else if (std.mem.eql(u8, cmd, "test-obj")) .zig_test_obj //
         else {
             log.err("initCompilation: unknown cmd: {s}", .{cmd});
             return;
